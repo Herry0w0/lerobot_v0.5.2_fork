@@ -16,10 +16,19 @@
 
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+
+# Offline-friendly tokenizer source: Hub id needs cache; local dir works with HF_HUB_OFFLINE=1.
+_PALIGEMMA_TOKENIZER_LOCAL = Path("/mnt/data1/zhangyuqi/models/google/paligemma-3b-pt-224")
+_PALIGEMMA_TOKENIZER_NAME = (
+    str(_PALIGEMMA_TOKENIZER_LOCAL)
+    if _PALIGEMMA_TOKENIZER_LOCAL.is_dir()
+    else "google/paligemma-3b-pt-224"
+)
 
 from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import (
@@ -80,7 +89,7 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
 
         # State should already be normalized to [-1, 1] by the NormalizerProcessorStep that runs before this step
         # Discretize into 256 bins (see openpi `PaligemmaTokenizer.tokenize()`)
-        state_np = state.cpu().numpy()
+        state_np = np.clip(state.cpu().numpy(), -1.0, 1.0)
         discretized_states = np.digitize(state_np, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
 
         # A supervised action is present for training batches but absent during
@@ -176,7 +185,7 @@ def make_pi05_pre_post_processors(
             state_dropout_prob=config.state_dropout_prob,
         ),
         TokenizerProcessorStep(
-            tokenizer_name="google/paligemma-3b-pt-224",
+            tokenizer_name=_PALIGEMMA_TOKENIZER_NAME,
             max_length=config.tokenizer_max_length,
             padding_side="right",
             padding="max_length",

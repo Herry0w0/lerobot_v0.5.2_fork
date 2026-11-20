@@ -764,19 +764,17 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
-        def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
-                attention_mask=att_2d_masks_4d,
-                position_ids=position_ids,
-                past_key_values=None,
-                inputs_embeds=[prefix_embs, suffix_embs],
-                use_cache=False,
-                adarms_cond=[None, adarms_cond],
-            )
-            return suffix_out
-
-        suffix_out = self._apply_checkpoint(
-            forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+        # PaliGemmaWithExpertModel.forward already checkpoints each transformer
+        # layer and the final norms when gradient_checkpointing is enabled;
+        # wrapping the entire call in _apply_checkpoint causes redundant nested
+        # recomputation during backward.
+        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+            attention_mask=att_2d_masks_4d,
+            position_ids=position_ids,
+            past_key_values=None,
+            inputs_embeds=[prefix_embs, suffix_embs],
+            use_cache=False,
+            adarms_cond=[None, adarms_cond],
         )
 
         suffix_out = suffix_out[:, -self.config.chunk_size :]
@@ -1257,13 +1255,21 @@ class PI05Policy(PreTrainedPolicy):
         # One-shot diagnostic dump of the tensors that are actually passed to
         # the vision encoder. The saved PNGs are display copies mapped from
         # [-1, 1] back to [0, 255]; ``images`` itself is not modified.
+        # Off by default: set PI05_DUMP_MODEL_INPUTS=1 to enable.
+        # Optional PI05_DUMP_DIR overrides the output root.
         if (
-            os.environ.get("PI05_DUMP_MODEL_INPUTS", "1") != "0"
+            os.environ.get("PI05_DUMP_MODEL_INPUTS", "0") == "1"
             and not getattr(self, "_pi05_model_inputs_dumped", False)
         ):
             from PIL import Image
 
-            dump_dir = Path("/home/zhangyuqi/logs/pi05_model_inputs") / f"pid_{os.getpid()}"
+            dump_root = Path(
+                os.environ.get(
+                    "PI05_DUMP_DIR",
+                    str(Path.home() / "logs" / "pi05_model_inputs"),
+                )
+            )
+            dump_dir = dump_root / f"pid_{os.getpid()}"
             dump_dir.mkdir(parents=True, exist_ok=True)
             image_keys = present_img_keys + missing_img_keys
             metadata = []
